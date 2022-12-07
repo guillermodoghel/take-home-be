@@ -14,6 +14,7 @@ export class PlanetSearchQueryDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   public offset = 0;
 }

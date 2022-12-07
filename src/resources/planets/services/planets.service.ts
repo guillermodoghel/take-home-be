@@ -1,4 +1,4 @@
-import { Injectable, Scope } from '@nestjs/common';
+import { Injectable, Logger, Scope } from '@nestjs/common';
 import { PrismaService } from '@/db/prisma/services/prisma.service';
 import { PlanetSearchQueryDto } from '@/resources/planets/dto/PlanetSearchQueryDto';
 import {
@@ -6,14 +6,17 @@ import {
   PlanetResponseDto,
 } from '@/resources/planets/dto/PlanetListResponseDto';
 import { SwApiResponseDto } from '@/resources/planets/dto/SwapiResponseDto';
-import { Planet } from '@prisma/client';
+import { Planet, Prisma } from '@prisma/client';
 import axios from 'axios';
 
 @Injectable({ scope: Scope.TRANSIENT })
 export class PlanetsService {
-  constructor(private prismaService: PrismaService) {}
-
   private SWAPI_BASE = process.env.SWAP_BASE ?? `https://swapi.dev/api`;
+  private logger: Logger;
+
+  constructor(private prismaService: PrismaService) {
+    this.logger = new Logger(PlanetsService.name);
+  }
 
   public async getPlanets(
     query: PlanetSearchQueryDto,
@@ -53,7 +56,7 @@ export class PlanetsService {
     // we can make the requests for new values
     // while concurrently saving the results we already have in the database
     let queryURL = `${this.SWAPI_BASE}/planets/?search=${query.name}`;
-    let insertionsArray: Promise<any>[] = [];
+    let insertionsArray: Promise<void>[] = [];
 
     do {
       const swApiResponse = await axios
@@ -72,7 +75,7 @@ export class PlanetsService {
 
   private checkAndSaveSwApiResponse(
     swApiResponse: SwApiResponseDto,
-  ): Promise<any>[] {
+  ): Promise<void>[] {
     //Here we check if the planet already exists in the database
     // If it does not exist, we create it
     // I don't use the createMany because it's not supported by the SQLite driver
@@ -87,18 +90,28 @@ export class PlanetsService {
       });
 
       if (existingCount === 0) {
-        await this.prismaService.planet.create({
-          data: {
-            name: planet.name,
-            ...(!isNaN(parseInt(planet.diameter)) && {
-              diameter: parseInt(planet.diameter),
-            }),
-            gravity: planet.gravity,
-            terrain: planet.terrain,
-            createdAt: planet.created,
-            updatedAt: planet.edited,
-          } as unknown as Planet,
-        });
+        try {
+          await this.prismaService.planet.create({
+            data: {
+              name: planet.name,
+              ...(!isNaN(parseInt(planet.diameter)) && {
+                diameter: parseInt(planet.diameter),
+              }),
+              gravity: planet.gravity,
+              terrain: planet.terrain,
+              createdAt: planet.created,
+              updatedAt: planet.edited,
+            } as unknown as Planet,
+          });
+        } catch (e: any) {
+          // Simple error handling. We don't want to stop the process.
+          // We could return the error to the user, or a 206 (partial content)
+          // to communicate that some results were not saved.
+          this.logger.error(
+            `Error while saving planet ${planet.name} in the database: `,
+            e.message,
+          );
+        }
       }
     });
   }
